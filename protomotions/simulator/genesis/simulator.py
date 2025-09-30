@@ -2,6 +2,7 @@ import os
 import torch
 from typing import Dict, Optional
 from easydict import EasyDict
+import sys
 
 from isaac_utils import rotations
 from protomotions.simulator.base_simulator.simulator import Simulator
@@ -17,7 +18,8 @@ from protomotions.utils.scene_lib import SceneLib
 from protomotions.envs.base_env.env_utils.terrains.terrain import Terrain
 from protomotions.envs.base_env.env_utils.terrains.flat_terrain import FlatTerrain
 
-import genesis as gs
+# Lazy import: set placeholder; actual import occurs in __init__
+gs = None
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -42,12 +44,23 @@ class GenesisSimulator(Simulator):
         
         assert scene_lib is None, "Genesis does not support spawning objects in the scene"
         
-        # Initialize the Genesis engine: try GPU first, then fall back to CPU
-        try:
-            gs.init(backend=gs.gpu)
-        except Exception as e:
-            print(f"[GenesisSimulator] GPU backend init failed, falling back to CPU. Reason: {e}")
+        # Lazy import genesis now (after env vars can be set by caller)
+        global gs
+        if gs is None:
+            import importlib
+            gs = importlib.import_module("genesis")
+        
+        # Initialize the Genesis engine.
+        # Prefer CPU on macOS or when forced via env to avoid GPU driver-related segfaults.
+        force_cpu = os.environ.get("PROTOMOTIONS_GENESIS_FORCE_CPU", "0") == "1" or sys.platform == "darwin"
+        if force_cpu:
             gs.init(backend=gs.cpu)
+        else:
+            try:
+                gs.init(backend=gs.gpu)
+            except Exception as e:
+                print(f"[GenesisSimulator] GPU backend init failed, falling back to CPU. Reason: {e}")
+                gs.init(backend=gs.cpu)
         self._create_sim(visualization_markers)
 
     def _create_sim(self, visualization_markers: Dict) -> None:
