@@ -5,6 +5,18 @@ from isaac_utils import rotations, torch_utils
 from protomotions.envs.base_env.env import BaseEnv
 from protomotions.simulator.base_simulator.config import MarkerConfig, VisualizationMarker, MarkerState
 
+# Disable JIT compilation for MPS (Apple Silicon) as it doesn't support graph fuser
+_USE_JIT = not (torch.backends.mps.is_available() and torch.backends.mps.is_built())
+
+def _maybe_jit(fn):
+    """Conditionally apply torch.jit.script based on device capability."""
+    return torch.jit.script(fn) if _USE_JIT else fn
+
+def _maybe_jit_if_tracing(fn):
+    """Conditionally apply torch.jit.script_if_tracing based on device capability."""
+    return torch.jit.script_if_tracing(fn) if _USE_JIT else fn
+
+
 
 class Steering(BaseEnv):
     def __init__(self, config, device: torch.device, *args, **kwargs):
@@ -186,7 +198,7 @@ class Steering(BaseEnv):
 #####################################################################
 
 
-@torch.jit.script
+@_maybe_jit
 def compute_heading_observations(
     root_rot: Tensor, tar_dir: Tensor, tar_speed: Tensor
 ) -> Tensor:
@@ -202,7 +214,7 @@ def compute_heading_observations(
     return obs
 
 
-@torch.jit.script
+@_maybe_jit
 def compute_heading_reward(
     root_pos: Tensor,
     prev_root_pos: Tensor,

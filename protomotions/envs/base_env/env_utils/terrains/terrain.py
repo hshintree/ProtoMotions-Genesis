@@ -361,6 +361,7 @@ class Terrain:
                 self.config.num_samples_per_axis,
             ),
             device=self.device,
+            dtype=torch.float32,
             requires_grad=False,
         )
         x = torch.tensor(
@@ -370,6 +371,7 @@ class Terrain:
                 self.config.num_samples_per_axis,
             ),
             device=self.device,
+            dtype=torch.float32,
             requires_grad=False,
         )
         grid_x, grid_y = torch.meshgrid(x, y)

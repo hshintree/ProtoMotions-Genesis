@@ -42,8 +42,12 @@ class GenesisSimulator(Simulator):
         
         assert scene_lib is None, "Genesis does not support spawning objects in the scene"
         
-        # Initialize the Genesis engine
-        gs.init(backend=gs.gpu)
+        # Initialize the Genesis engine: try GPU first, then fall back to CPU
+        try:
+            gs.init(backend=gs.gpu)
+        except Exception as e:
+            print(f"[GenesisSimulator] GPU backend init failed, falling back to CPU. Reason: {e}")
+            gs.init(backend=gs.cpu)
         self._create_sim(visualization_markers)
 
     def _create_sim(self, visualization_markers: Dict) -> None:
@@ -117,8 +121,8 @@ class GenesisSimulator(Simulator):
             self._robot = self._scene.add_entity(
                 gs.morphs.URDF(
                     file=asset_path,
-                    merge_fixed_links=True,
-                    links_to_keep=self.robot_config.body_names,
+                    # links_to_keep=self.robot_config.body_names,
+                    merge_fixed_links=True
                 ),
                 visualize_contact=False,
             )
@@ -137,9 +141,9 @@ class GenesisSimulator(Simulator):
                 dof_limits_lower.extend(joint.dofs_limit[:, 0])
                 dof_limits_upper.extend(joint.dofs_limit[:, 1])
 
-        self._genesis_dof_indices = torch.tensor(self._genesis_dof_indices, device=self.device)
-        self._dof_limits_lower_sim = torch.tensor(dof_limits_lower, device=self.device)
-        self._dof_limits_upper_sim = torch.tensor(dof_limits_upper, device=self.device)
+        self._genesis_dof_indices = torch.tensor(self._genesis_dof_indices, device=self.device, dtype=torch.int32)
+        self._dof_limits_lower_sim = torch.tensor(dof_limits_lower, device=self.device, dtype=torch.float32)
+        self._dof_limits_upper_sim = torch.tensor(dof_limits_upper, device=self.device, dtype=torch.float32)
         
         self._scene.build(n_envs=self.num_envs)
         
@@ -161,6 +165,16 @@ class GenesisSimulator(Simulator):
             rigid_body_ang_vel=self._robot.get_links_ang(),
         )
         super().on_environment_ready()
+        
+        # Set PD control gains for Genesis if using PD control
+        if self.control_type == ControlType.BUILT_IN_PD and hasattr(self, '_common_p_gains'):
+            # Convert gains from common ordering to Genesis ordering
+            genesis_p_gains = self._common_p_gains[self.data_conversion.dof_convert_to_sim]
+            genesis_d_gains = self._common_d_gains[self.data_conversion.dof_convert_to_sim]
+            
+            # Set the gains on the robot
+            self._robot.set_dofs_kp(genesis_p_gains, self._genesis_dof_indices)
+            self._robot.set_dofs_kv(genesis_d_gains, self._genesis_dof_indices)
 
     def _get_sim_body_ordering(self) -> SimBodyOrdering:
         """Returns the ordering of bodies and DOFs in the simulation."""

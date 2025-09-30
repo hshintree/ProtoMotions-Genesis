@@ -86,6 +86,9 @@ class MotionLib(DeviceDtypeModuleMixin):
             w_last: bool = True,
     ):
         super().__init__()
+        # Set the device explicitly to ensure all operations use the correct device
+        self.to(device)
+        
         self.w_last = w_last
         self.fix_heights = fix_motion_heights
         self.skeleton_tree = skeleton_tree
@@ -99,6 +102,11 @@ class MotionLib(DeviceDtypeModuleMixin):
             torch.tensor(key_body_ids, dtype=torch.long, device=device),
             persistent=False,
         )
+
+        # Move skeleton_tree tensors to the correct device if present
+        # Note: parent_indices stays on CPU as it's used for indexing and converted to numpy in poselib
+        if self.skeleton_tree is not None:
+            self.skeleton_tree._local_translation = skeleton_tree._local_translation.to(device=device, dtype=torch.float32)
 
         if str(motion_file).split(".")[-1] in ["yaml", "npy", "npz", "np"]:
             print("Loading motions from yaml/npy file")
@@ -384,12 +392,17 @@ class MotionLib(DeviceDtypeModuleMixin):
 
         return motion_state
 
-    @staticmethod
-    def _load_motion_file(motion_file):
-        return SkeletonMotion.from_file(motion_file)
+    def _load_motion_file(self, motion_file):
+        motion = SkeletonMotion.from_file(motion_file)
+        # Move motion tensors to the correct device and dtype (float32 for MPS compatibility)
+        motion.tensor = motion.tensor.to(device=self._device, dtype=torch.float32)
+        # Move skeleton_tree tensors to the correct device and dtype if present
+        # Note: parent_indices stays on CPU as it's used for indexing and converted to numpy in poselib
+        if hasattr(motion, 'skeleton_tree') and motion.skeleton_tree is not None:
+            motion.skeleton_tree._local_translation = motion.skeleton_tree._local_translation.to(device=self._device, dtype=torch.float32)
+        return motion
 
-    @staticmethod
-    def _slice_motion_file(motion, motion_timings):
+    def _slice_motion_file(self, motion, motion_timings):
         start, end = motion_timings
         start_frame = round(start * motion.fps)
         if end == -1:
@@ -401,8 +414,9 @@ class MotionLib(DeviceDtypeModuleMixin):
                 start_frame < end_frame
         ), f"Motion start frame {start_frame} >= motion end frame {end_frame}"
 
-        sliced_local_rotation = motion.local_rotation[start_frame:end_frame].clone()
-        sliced_root_translation = motion.root_translation[start_frame:end_frame].clone()
+        # Move tensors to the correct device
+        sliced_local_rotation = motion.local_rotation[start_frame:end_frame].clone().to(device=self._device)
+        sliced_root_translation = motion.root_translation[start_frame:end_frame].clone().to(device=self._device)
 
         new_sk_state = SkeletonState.from_rotation_and_root_translation(
             motion.skeleton_tree,
@@ -754,8 +768,7 @@ class MotionLib(DeviceDtypeModuleMixin):
 
         return dof_vel
 
-    @staticmethod
-    def fix_motion_heights(motion, skeleton_tree):
+    def fix_motion_heights(self, motion, skeleton_tree):
         if skeleton_tree is None:
             if hasattr(motion, "skeleton_tree"):
                 skeleton_tree = motion.skeleton_tree
@@ -766,12 +779,19 @@ class MotionLib(DeviceDtypeModuleMixin):
             motion.global_translation[..., 2] -= min_height
             return motion
 
-        root_translation = motion.root_translation
+        # Ensure skeleton_tree tensors are on the correct device
+        # Note: parent_indices stays on CPU as it's used for indexing and converted to numpy in poselib
+        if skeleton_tree._local_translation.device != self._device:
+            skeleton_tree._local_translation = skeleton_tree._local_translation.to(device=self._device, dtype=torch.float32)
+
+        # Move tensors to the correct device and dtype
+        root_translation = motion.root_translation.to(device=self._device, dtype=torch.float32)
         root_translation[:, 2] -= min_height
+        global_rotation = motion.global_rotation.to(device=self._device, dtype=torch.float32)
 
         new_sk_state = SkeletonState.from_rotation_and_root_translation(
             skeleton_tree,
-            motion.global_rotation,
+            global_rotation,
             root_translation,
             is_local=False,
         )
@@ -780,8 +800,8 @@ class MotionLib(DeviceDtypeModuleMixin):
 
         return new_motion
 
-    @staticmethod
     def _fix_motion_fps(
+            self,
             motion,
             orig_fps,
             target_frame_rate,
@@ -793,10 +813,16 @@ class MotionLib(DeviceDtypeModuleMixin):
             else:
                 return motion
 
+        # Ensure skeleton_tree tensors are on the correct device
+        # Note: parent_indices stays on CPU as it's used for indexing and converted to numpy in poselib
+        if skeleton_tree._local_translation.device != self._device:
+            skeleton_tree._local_translation = skeleton_tree._local_translation.to(device=self._device, dtype=torch.float32)
+
         skip = int(np.round(orig_fps / target_frame_rate))
 
-        lr = motion.local_rotation[::skip]
-        rt = motion.root_translation[::skip]
+        # Move tensors to the correct device and dtype before creating SkeletonState
+        lr = motion.local_rotation[::skip].to(device=self._device, dtype=torch.float32)
+        rt = motion.root_translation[::skip].to(device=self._device, dtype=torch.float32)
 
         new_sk_state = SkeletonState.from_rotation_and_root_translation(
             skeleton_tree,

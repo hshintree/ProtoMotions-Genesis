@@ -12,8 +12,14 @@ import numpy as np
 from isaac_utils.rotations import quat_rotate, quat_from_angle_axis, normalize_angle
 from typing import Tuple
 
+# Disable JIT compilation for MPS (Apple Silicon) as it doesn't support graph fuser
+_USE_JIT = not (torch.backends.mps.is_available() and torch.backends.mps.is_built())
 
-@torch.jit.script
+def _maybe_jit(fn):
+    """Conditionally apply torch.jit.script based on device capability."""
+    return torch.jit.script(fn) if _USE_JIT else fn
+
+@_maybe_jit
 def quat_to_angle_axis(q: Tensor, w_last: bool = False) -> Tuple[Tensor, Tensor]:
     # computes axis-angle representation from quaternion q
     # q must be normalized
@@ -39,7 +45,7 @@ def quat_to_angle_axis(q: Tensor, w_last: bool = False) -> Tuple[Tensor, Tensor]
     return angle, axis
 
 
-@torch.jit.script
+@_maybe_jit
 def angle_axis_to_exp_map(angle: Tensor, axis: Tensor) -> Tensor:
     # compute exponential map from axis-angle
     angle_expand = angle.unsqueeze(-1)
@@ -47,7 +53,7 @@ def angle_axis_to_exp_map(angle: Tensor, axis: Tensor) -> Tensor:
     return exp_map
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_to_exp_map(q: Tensor, w_last: bool = False) -> Tensor:
     # compute exponential map from quaternion
     # q must be normalized
@@ -56,7 +62,7 @@ def quat_to_exp_map(q: Tensor, w_last: bool = False) -> Tensor:
     return exp_map
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_to_tan_norm(q: Tensor, w_last: bool) -> Tensor:
     # represents a rotation using the tangent and normal vectors
     ref_tan = torch.zeros_like(q[..., 0:3])
@@ -71,7 +77,7 @@ def quat_to_tan_norm(q: Tensor, w_last: bool) -> Tensor:
     return norm_tan
 
 
-@torch.jit.script
+@_maybe_jit
 def exp_map_to_angle_axis(exp_map: Tensor) -> Tuple[Tensor, Tensor]:
     min_theta = 1e-5
 
@@ -91,14 +97,14 @@ def exp_map_to_angle_axis(exp_map: Tensor) -> Tuple[Tensor, Tensor]:
     return angle, axis
 
 
-@torch.jit.script
+@_maybe_jit
 def exp_map_to_quat(exp_map: Tensor, w_last: bool) -> Tensor:
     angle, axis = exp_map_to_angle_axis(exp_map)
     q = quat_from_angle_axis(angle, axis, w_last)
     return q
 
 
-@torch.jit.script
+@_maybe_jit
 def calc_heading(q: Tensor, w_last: bool) -> Tensor:
     # calculate heading direction from quaternion
     # the heading is the direction on the xy plane
@@ -111,7 +117,7 @@ def calc_heading(q: Tensor, w_last: bool) -> Tensor:
     return heading
 
 
-@torch.jit.script
+@_maybe_jit
 def calc_heading_quat(q: Tensor, w_last: bool) -> Tensor:
     # calculate heading rotation from quaternion
     # the heading is the direction on the xy plane
@@ -124,7 +130,7 @@ def calc_heading_quat(q: Tensor, w_last: bool) -> Tensor:
     return heading_q
 
 
-@torch.jit.script
+@_maybe_jit
 def calc_heading_quat_inv(q: Tensor, w_last: bool = False) -> Tensor:
     # calculate heading rotation from quaternion
     # the heading is the direction on the xy plane
@@ -137,7 +143,7 @@ def calc_heading_quat_inv(q: Tensor, w_last: bool = False) -> Tensor:
     return heading_q
 
 
-@torch.jit.script
+@_maybe_jit
 def slerp(q0: Tensor, q1: Tensor, t: Tensor) -> Tensor:
     cos_half_theta = torch.sum(q0 * q1, dim=-1)
 
@@ -184,7 +190,7 @@ def to_torch(x, dtype=torch.float, device='cuda:0', requires_grad=False) -> torc
     return torch.tensor(x, dtype=dtype, device=device, requires_grad=requires_grad)
 
 
-@torch.jit.script
+@_maybe_jit
 def heading_to_vec(h_theta):
     v = torch.stack([torch.cos(h_theta), torch.sin(h_theta)], dim=-1)
     return v

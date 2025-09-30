@@ -6,6 +6,18 @@ from protomotions.envs.path_follower.path_generator import PathGenerator
 from protomotions.envs.base_env.env import BaseEnv
 from protomotions.simulator.base_simulator.config import MarkerConfig, VisualizationMarker, MarkerState
 
+# Disable JIT compilation for MPS (Apple Silicon) as it doesn't support graph fuser
+_USE_JIT = not (torch.backends.mps.is_available() and torch.backends.mps.is_built())
+
+def _maybe_jit(fn):
+    """Conditionally apply torch.jit.script based on device capability."""
+    return torch.jit.script(fn) if _USE_JIT else fn
+
+def _maybe_jit_if_tracing(fn):
+    """Conditionally apply torch.jit.script_if_tracing based on device capability."""
+    return torch.jit.script_if_tracing(fn) if _USE_JIT else fn
+
+
 class PathFollowing(BaseEnv):
     def __init__(self, config, device: torch.device, *args, **kwargs):
         super().__init__(config=config, device=device, *args, **kwargs)
@@ -223,7 +235,7 @@ class PathFollowing(BaseEnv):
 #####################################################################
 
 
-@torch.jit.script
+@_maybe_jit
 def compute_path_observations(
     root_rot: Tensor,
     head_states: Tensor,
@@ -264,7 +276,7 @@ def compute_path_observations(
     return obs
 
 
-@torch.jit.script
+@_maybe_jit
 def compute_path_reward(head_pos, tar_pos, height_conditioned):
     # type: (Tensor, Tensor, bool) -> Tensor
     pos_err_scale = 2.0
@@ -286,7 +298,7 @@ def compute_path_reward(head_pos, tar_pos, height_conditioned):
     return reward
 
 
-@torch.jit.script
+@_maybe_jit
 def compute_humanoid_reset(
     reset_buf,
     progress_buf,

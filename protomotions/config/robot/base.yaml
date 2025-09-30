@@ -74,10 +74,9 @@ robot:
     isaacgym:
       fps: 60
       decimation: 2
-      substeps: 2
     isaaclab:
-      fps: 120
-      decimation: 4
+      fps: 60
+      decimation: 2
     genesis:
       fps: 60
       decimation: 2

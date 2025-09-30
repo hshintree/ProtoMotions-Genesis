@@ -179,6 +179,9 @@ class PPO:
 
         # Check if new high score flag is consistent across devices.
         gathered_high_score = self.fabric.all_gather(new_high_score)
+        # Handle both 0-d tensor (single device) and 1-d tensor (multi-device)
+        if gathered_high_score.dim() == 0:
+            gathered_high_score = gathered_high_score.unsqueeze(0)
         assert all(
             [x == gathered_high_score[0] for x in gathered_high_score]
         ), "New high score flag should be the same across all ranks."

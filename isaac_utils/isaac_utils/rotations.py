@@ -12,6 +12,12 @@ import torch.nn.functional as F
 from isaac_utils.maths import *
 from typing import Tuple
 
+# Disable JIT compilation for MPS (Apple Silicon) as it doesn't support graph fuser
+_USE_JIT = not (torch.backends.mps.is_available() and torch.backends.mps.is_built())
+
+def _maybe_jit(fn):
+    """Conditionally apply torch.jit.script based on device capability."""
+    return torch.jit.script(fn) if _USE_JIT else fn
 
 def wxyz_to_xyzw(quat: Tensor):
     shape = quat.shape
@@ -27,7 +33,7 @@ def xyzw_to_wxyz(quat: Tensor):
     return flat_quat.reshape(shape)
 
 
-@torch.jit.script
+@_maybe_jit
 def _sqrt_positive_part(x: Tensor) -> Tensor:
     """
     Returns torch.sqrt(torch.max(0, x))
@@ -65,7 +71,7 @@ def deg2rad(degree_value: float, device=None) -> Tensor:
     return torch.deg2rad(degree_value).float().to(device)
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_mul(a, b, w_last: bool):
     assert a.shape == b.shape
     shape = a.shape
@@ -96,7 +102,7 @@ def quat_mul(a, b, w_last: bool):
     return quat
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_conjugate(a: Tensor, w_last: bool) -> Tensor:
     shape = a.shape
     a = a.reshape(-1, 4)
@@ -106,7 +112,7 @@ def quat_conjugate(a: Tensor, w_last: bool) -> Tensor:
         return torch.cat((a[:, 0:1], -a[:, 1:]), dim=-1).reshape(shape)
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_apply(a: Tensor, b: Tensor, w_last: bool) -> Tensor:
     shape = b.shape
     a = a.reshape(-1, 4)
@@ -121,7 +127,7 @@ def quat_apply(a: Tensor, b: Tensor, w_last: bool) -> Tensor:
     return (b + w * t + xyz.cross(t, dim=-1)).reshape(shape)
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_rotate(q: Tensor, v: Tensor, w_last: bool) -> Tensor:
     shape = q.shape
     flat_q = q.reshape(-1, shape[-1])
@@ -144,7 +150,7 @@ def quat_rotate(q: Tensor, v: Tensor, w_last: bool) -> Tensor:
     return (a + b + c).reshape(v.shape)
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_rotate_inverse(q: Tensor, v: Tensor, w_last: bool) -> Tensor:
     shape = q.shape
     if w_last:
@@ -163,12 +169,12 @@ def quat_rotate_inverse(q: Tensor, v: Tensor, w_last: bool) -> Tensor:
     return a - b + c
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_unit(a):
     return normalize(a)
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_mul_norm(x: Tensor, y: Tensor, w_last: bool) -> Tensor:
     """
     Combine two set of 3D rotations together using \**\* operator. The shape needs to be
@@ -177,7 +183,7 @@ def quat_mul_norm(x: Tensor, y: Tensor, w_last: bool) -> Tensor:
     return quat_unit(quat_mul(x, y, w_last))
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_angle_axis(x: Tensor, w_last: bool) -> Tuple[Tensor, Tensor]:
     """
     The (angle, axis) representation of the rotation. The axis is normalized to unit length.
@@ -195,7 +201,7 @@ def quat_angle_axis(x: Tensor, w_last: bool) -> Tuple[Tensor, Tensor]:
     return angle, axis
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_from_angle_axis(angle: Tensor, axis: Tensor, w_last: bool) -> Tensor:
     theta = (angle / 2).unsqueeze(-1)
     xyz = normalize(axis) * theta.sin()
@@ -206,13 +212,13 @@ def quat_from_angle_axis(angle: Tensor, axis: Tensor, w_last: bool) -> Tensor:
         return quat_unit(torch.cat([w, xyz], dim=-1))
 
 
-@torch.jit.script
+@_maybe_jit
 def vec_to_heading(h_vec):
     h_theta = torch.atan2(h_vec[..., 1], h_vec[..., 0])
     return h_theta
 
 
-@torch.jit.script
+@_maybe_jit
 def heading_to_quat(h_theta, w_last: bool):
     axis = torch.zeros(
         h_theta.shape
@@ -226,24 +232,24 @@ def heading_to_quat(h_theta, w_last: bool):
     return heading_q
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_axis(q: Tensor, axis: int, w_last: bool) -> Tensor:
     basis_vec = torch.zeros(q.shape[0], 3, device=q.device)
     basis_vec[:, axis] = 1
     return quat_rotate(q, basis_vec, w_last)
 
 
-@torch.jit.script
+@_maybe_jit
 def normalize_angle(x):
     return torch.atan2(torch.sin(x), torch.cos(x))
 
 
-@torch.jit.script
+@_maybe_jit
 def get_basis_vector(q: Tensor, v: Tensor, w_last: bool) -> Tensor:
     return quat_rotate(q, v, w_last)
 
 
-@torch.jit.script
+@_maybe_jit
 def get_euler_xyz(q: Tensor, w_last: bool) -> Tuple[Tensor, Tensor, Tensor]:
     if w_last:
         qx, qy, qz, qw = 0, 1, 2, 3
@@ -278,7 +284,7 @@ def get_euler_xyz(q: Tensor, w_last: bool) -> Tuple[Tensor, Tensor, Tensor]:
     return roll % (2 * np.pi), pitch % (2 * np.pi), yaw % (2 * np.pi)
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_from_euler_xyz(
     roll: Tensor, pitch: Tensor, yaw: Tensor, w_last: bool
 ) -> Tensor:
@@ -300,7 +306,7 @@ def quat_from_euler_xyz(
         return torch.stack([qw, qx, qy, qz], dim=-1)
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_diff_rad(a: Tensor, b: Tensor, w_last: bool) -> Tensor:
     """
     Get the difference in radians between two quaternions.
@@ -332,7 +338,7 @@ def normalise_quat_in_pose(pose):
     return torch.cat([pos, quat], dim=-1)
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_apply_yaw(quat: Tensor, vec: Tensor, w_last: bool) -> Tensor:
     quat_yaw = quat.clone().reshape(-1, 4)
     quat_yaw[:, :2] = 0.0
@@ -340,7 +346,7 @@ def quat_apply_yaw(quat: Tensor, vec: Tensor, w_last: bool) -> Tensor:
     return quat_apply(quat_yaw, vec, w_last)
 
 
-@torch.jit.script
+@_maybe_jit
 def quaternion_to_matrix(quaternions: torch.Tensor, w_last: bool) -> torch.Tensor:
     """
     Convert rotations given as quaternions to rotation matrices.
@@ -375,7 +381,7 @@ def quaternion_to_matrix(quaternions: torch.Tensor, w_last: bool) -> torch.Tenso
     return o.reshape(quaternions.shape[:-1] + (3, 3))
 
 
-@torch.jit.script
+@_maybe_jit
 def axis_angle_to_quaternion(axis_angle: torch.Tensor, w_last: bool) -> torch.Tensor:
     """
     Convert rotations given as axis/angle to quaternions.
@@ -411,7 +417,7 @@ def axis_angle_to_quaternion(axis_angle: torch.Tensor, w_last: bool) -> torch.Te
     return quaternions
 
 
-@torch.jit.script
+@_maybe_jit
 def matrix_to_quaternion(matrix: torch.Tensor, w_last: bool) -> torch.Tensor:
     """
     Convert rotations given as rotation matrices to quaternions.

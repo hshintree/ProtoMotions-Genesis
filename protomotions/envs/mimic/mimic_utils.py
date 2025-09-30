@@ -6,8 +6,20 @@ from omegaconf.dictconfig import DictConfig
 from protomotions.envs.base_env.env_utils.humanoid_utils import quat_angle_diff_norm
 from isaac_utils import torch_utils, rotations
 
+# Disable JIT compilation for MPS (Apple Silicon) as it doesn't support graph fuser
+_USE_JIT = not (torch.backends.mps.is_available() and torch.backends.mps.is_built())
 
-@torch.jit.script
+def _maybe_jit(fn):
+    """Conditionally apply torch.jit.script based on device capability."""
+    return torch.jit.script(fn) if _USE_JIT else fn
+
+def _maybe_jit_if_tracing(fn):
+    """Conditionally apply torch.jit.script_if_tracing based on device capability."""
+    return torch.jit.script_if_tracing(fn) if _USE_JIT else fn
+
+
+
+@_maybe_jit
 def mul_exp_mean(x: Tensor, coef: float, mean_before_exp: bool):
     if mean_before_exp:
         return x.mean(-1).mul(coef).exp()
@@ -15,7 +27,7 @@ def mul_exp_mean(x: Tensor, coef: float, mean_before_exp: bool):
         return x.mul(coef).exp().mean(-1)
 
 
-@torch.jit.script_if_tracing  # This is important to ensure it doesn't compile the omega config early.
+@_maybe_jit_if_tracing  # This is important to ensure it doesn't compile the omega config early.
 def exp_tracking_reward(
     gt: Tensor,
     rt: Tensor,
@@ -117,7 +129,7 @@ def exp_tracking_reward(
     return rew_dict
 
 
-@torch.jit.script
+@_maybe_jit
 def dof_to_local(pose: Tensor, dof_offsets: List[int], joint_axis: List[str], w_last: bool) -> Tensor:
     """Convert degrees of freedom (DoF) representation to local rotations.
 
@@ -167,7 +179,7 @@ def dof_to_local(pose: Tensor, dof_offsets: List[int], joint_axis: List[str], w_
     return local_rot
 
 
-@torch.jit.script_if_tracing
+@_maybe_jit_if_tracing
 def build_max_coords_target_poses_future_rel(
     cur_gt: Tensor,
     cur_gr: Tensor,
@@ -268,7 +280,7 @@ def build_max_coords_target_poses_future_rel(
     return obs
 
 
-@torch.jit.script_if_tracing
+@_maybe_jit_if_tracing
 def build_max_coords_target_poses(
     cur_gt: Tensor,
     cur_gr: Tensor,
@@ -353,7 +365,7 @@ def build_max_coords_target_poses(
     return obs
 
 
-@torch.jit.script_if_tracing
+@_maybe_jit_if_tracing
 def build_sparse_target_poses(
     cur_gt: Tensor,
     cur_gr: Tensor,

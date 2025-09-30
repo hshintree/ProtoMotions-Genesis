@@ -11,13 +11,25 @@ import numpy as np
 import random
 import os
 
+# Disable JIT compilation for MPS (Apple Silicon) as it doesn't support graph fuser
+_USE_JIT = not (torch.backends.mps.is_available() and torch.backends.mps.is_built())
 
-@torch.jit.script
+def _maybe_jit(fn):
+    """Conditionally apply torch.jit.script based on device capability."""
+    return torch.jit.script(fn) if _USE_JIT else fn
+
+def _maybe_jit_if_tracing(fn):
+    """Conditionally apply torch.jit.script_if_tracing based on device capability."""
+    return torch.jit.script_if_tracing(fn) if _USE_JIT else fn
+
+
+
+@_maybe_jit
 def normalize(x, eps: float = 1e-9):
     return x / x.norm(p=2, dim=-1).clamp(min=eps, max=None).unsqueeze(-1)
 
 
-@torch.jit.script
+@_maybe_jit
 def scale_transform(x: torch.Tensor, lower: torch.Tensor, upper: torch.Tensor) -> torch.Tensor:
     """
     Normalizes a given input tensor to a range of [-1, 1].
@@ -38,7 +50,7 @@ def scale_transform(x: torch.Tensor, lower: torch.Tensor, upper: torch.Tensor) -
     return 2 * (x - offset) / (upper - lower)
 
 
-@torch.jit.script
+@_maybe_jit
 def unscale_transform(x: torch.Tensor, lower: torch.Tensor, upper: torch.Tensor) -> torch.Tensor:
     """
     Denormalizes a given input tensor from range of [-1, 1] to (lower, upper).
@@ -59,37 +71,37 @@ def unscale_transform(x: torch.Tensor, lower: torch.Tensor, upper: torch.Tensor)
     return x * (upper - lower) * 0.5 + offset
 
 
-@torch.jit.script
+@_maybe_jit
 def copysign(a, b):
     # type: (float, Tensor) -> Tensor
     a = torch.tensor(a, device=b.device, dtype=torch.float).repeat(b.shape[0])
     return torch.abs(a) * torch.sign(b)
 
 
-@torch.jit.script
+@_maybe_jit
 def torch_rand_float(lower, upper, shape, device):
     # type: (float, float, Tuple[int, int], str) -> Tensor
     return (upper - lower) * torch.rand(*shape, device=device) + lower
 
 
-@torch.jit.script
+@_maybe_jit
 def torch_random_dir_2(shape, device):
     # type: (Tuple[int, int], str) -> Tensor
     angle = torch_rand_float(-np.pi, np.pi, shape, device).squeeze(-1)
     return torch.stack([torch.cos(angle), torch.sin(angle)], dim=-1)
 
 
-@torch.jit.script
+@_maybe_jit
 def tensor_clamp(t, min_t, max_t):
     return torch.max(torch.min(t, max_t), min_t)
 
 
-@torch.jit.script
+@_maybe_jit
 def scale(x, lower, upper):
     return 0.5 * (x + 1.0) * (upper - lower) + lower
 
 
-@torch.jit.script
+@_maybe_jit
 def unscale(x, lower, upper):
     return (2.0 * x - upper - lower) / (upper - lower)
 

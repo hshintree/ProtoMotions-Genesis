@@ -4,8 +4,18 @@ import numpy as np
 from isaac_utils import rotations
 from scipy import ndimage
 
+# Disable JIT compilation for MPS (Apple Silicon) as it doesn't support graph fuser
+_USE_JIT = not (torch.backends.mps.is_available() and torch.backends.mps.is_built())
 
-@torch.jit.script
+def _maybe_jit(fn):
+    """Conditionally apply torch.jit.script based on device capability."""
+    return torch.jit.script(fn) if _USE_JIT else fn
+
+def _maybe_jit_if_tracing(fn):
+    """Conditionally apply torch.jit.script_if_tracing based on device capability."""
+    return torch.jit.script_if_tracing(fn) if _USE_JIT else fn
+
+@_maybe_jit
 def get_heights_jit(
     locations: Tensor,
     height_samples: Tensor,
@@ -27,7 +37,7 @@ def get_heights_jit(
     return heights.view(num_envs, -1)
 
 
-@torch.jit.script_if_tracing
+@_maybe_jit_if_tracing
 def get_height_maps_jit(
     base_rot: Tensor,
     base_pos: Tensor,

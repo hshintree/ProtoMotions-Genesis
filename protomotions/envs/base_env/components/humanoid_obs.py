@@ -100,6 +100,7 @@ class HumanoidObs(BaseComponent):
         ground_heights = self.env.terrain.get_ground_heights(current_state.rigid_body_pos[:, 0]).clone()
 
         if self.config.use_max_coords_obs:
+            num_bodies = current_state.rigid_body_pos.shape[1]
             obs = compute_humanoid_observations_max(
                 current_state.rigid_body_pos,
                 current_state.rigid_body_rot,
@@ -110,6 +111,15 @@ class HumanoidObs(BaseComponent):
                 self.config.root_height_obs,
                 True,
             )
+            # Diagnostic: show obs breakdown
+            expected_size = 1 + num_bodies * (3 + 6 + 3 + 3) - 3  # height + bodies*(pos+rot+vel+angvel) - root_pos
+            if obs.shape[1] != self.humanoid_obs.shape[1]:
+                print(f"[DIAGNOSTIC] Max coords obs breakdown:")
+                print(f"  Num bodies: {num_bodies}")
+                print(f"  Expected formula: 1 + {num_bodies} * 15 - 3 = {expected_size}")
+                print(f"  Actual obs size: {obs.shape[1]}")
+                print(f"  Buffer size: {self.humanoid_obs.shape[1]}")
+                print(f"  Config obs_size: {self.config.obs_size}")
 
         else:
             dof_state = self.env.simulator.get_dof_state(env_ids)
@@ -136,6 +146,16 @@ class HumanoidObs(BaseComponent):
                 self.env.simulator.get_dof_offsets(),
                 True,
             )
+        
+        # Surgical guard: catch dimension mismatch with clear message
+        if obs.shape[1] != self.humanoid_obs.shape[1]:
+            raise RuntimeError(
+                f"Humanoid obs dim mismatch: produced {obs.shape[1]} vs buffer {self.humanoid_obs.shape[1]}. "
+                f"Check obs config toggles and robot DOFs/bodies. "
+                f"Robot has {len(self.env.config.robot.body_names)} bodies, "
+                f"config expects obs_size={self.config.obs_size}"
+            )
+        
         self.body_contacts[:] = body_contacts
         self.humanoid_obs[env_ids] = obs
         self.humanoid_obs_hist_buf.set_curr(obs, env_ids)

@@ -225,7 +225,7 @@ class SkeletonTree(Serializable):
             new_length, 3, dtype=self.local_translation.dtype
         )
         new_parent_indices = torch.zeros(new_length, dtype=self.parent_indices.dtype)
-        parent_indices = self.parent_indices.numpy()
+        parent_indices = self.parent_indices.cpu().numpy()
         new_node_indices: dict = {}
         new_node_index = 0
         for node_index in range(len(self)):
@@ -413,7 +413,7 @@ class SkeletonState(Serializable):
         if not hasattr(self, "_global_transformation"):
             local_transformation = self.local_transformation
             global_transformation = []
-            parent_indices = self.skeleton_tree.parent_indices.numpy()
+            parent_indices = self.skeleton_tree.parent_indices.cpu().numpy()
             # global_transformation = local_transformation.identity_like()
             for node_index in range(len(self.skeleton_tree)):
                 parent_index = parent_indices[node_index]
@@ -572,10 +572,10 @@ class SkeletonState(Serializable):
         # Perpendicular to the forward direction.
         # Uses the shoulders and hips to find this.
         side_direction = (
-            global_positions[:, left_shoulder_index].numpy()
-            - global_positions[:, right_shoulder_index].numpy()
-            + global_positions[:, left_hip_index].numpy()
-            - global_positions[:, right_hip_index].numpy()
+            global_positions[:, left_shoulder_index].cpu().numpy()
+            - global_positions[:, right_shoulder_index].cpu().numpy()
+            + global_positions[:, left_hip_index].cpu().numpy()
+            - global_positions[:, right_hip_index].cpu().numpy()
         )
         side_direction = (
             side_direction / np.sqrt((side_direction**2).sum(axis=-1))[..., np.newaxis]
@@ -599,6 +599,14 @@ class SkeletonState(Serializable):
     @staticmethod
     def _to_state_vector(rot, rt):
         state_shape = rot.shape[:-2]
+        # Ensure both are float32 for MPS compatibility and on the same device
+        if rot.dtype == torch.float64:
+            rot = rot.to(dtype=torch.float32)
+        if rt.dtype == torch.float64:
+            rt = rt.to(dtype=torch.float32)
+        # Ensure same device (move rt to rot's device if needed)
+        if rt.device != rot.device:
+            rt = rt.to(device=rot.device)
         vr = rot.reshape(*(state_shape + (-1,)))
         vt = rt.broadcast_to(*state_shape + rt.shape[-1:]).reshape(
             *(state_shape + (-1,))
@@ -1234,19 +1242,21 @@ class SkeletonMotion(SkeletonState):
 
     @staticmethod
     def _compute_velocity(p, time_delta, guassian_filter=True):
-        velocity = np.gradient(p.numpy(), axis=-3) / time_delta
+        original_device = p.device
+        velocity = np.gradient(p.cpu().numpy(), axis=-3) / time_delta
         if guassian_filter:
             velocity = torch.from_numpy(
                 filters.gaussian_filter1d(velocity, 2, axis=-3, mode="nearest")
-            ).to(p)
+            ).to(device=original_device, dtype=p.dtype)
         else:
-            velocity = torch.from_numpy(velocity).to(p)
+            velocity = torch.from_numpy(velocity).to(device=original_device, dtype=p.dtype)
 
         return velocity
 
     @staticmethod
     def _compute_angular_velocity(r, time_delta: float, guassian_filter=True):
         # assume the second last dimension is the time axis
+        original_device = r.device
         diff_quat_data = quat_identity_like(r).to(r)
         diff_quat_data[..., :-1, :, :] = quat_mul_norm(
             r[..., 1:, :, :], quat_inverse(r[..., :-1, :, :])
@@ -1256,9 +1266,9 @@ class SkeletonMotion(SkeletonState):
         if guassian_filter:
             angular_velocity = torch.from_numpy(
                 filters.gaussian_filter1d(
-                    angular_velocity.numpy(), 2, axis=-3, mode="nearest"
+                    angular_velocity.cpu().numpy(), 2, axis=-3, mode="nearest"
                 ),
-            )
+            ).to(device=original_device, dtype=angular_velocity.dtype)
         return angular_velocity
 
     def crop(self, start: int, end: int, fps: Optional[int] = None):

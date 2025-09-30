@@ -1,0 +1,22 @@
+# @package _global_
+
+defaults:
+  - h1
+
+robot:
+  # Genesis H1 URDF loads these 20 links (merge_fixed_links=True collapses foot/head/end_effector)
+  body_names: ['pelvis', 'left_hip_yaw_link', 'right_hip_yaw_link', 'torso_link', 'left_hip_roll_link', 'right_hip_roll_link', 'left_shoulder_pitch_link', 'right_shoulder_pitch_link', 'left_hip_pitch_link', 'right_hip_pitch_link', 'left_shoulder_roll_link', 'right_shoulder_roll_link', 'left_knee_link', 'right_knee_link', 'left_shoulder_yaw_link', 'right_shoulder_yaw_link', 'left_ankle_link', 'right_ankle_link', 'left_elbow_link', 'right_elbow_link']
+  
+  # Use torso as head proxy, ankle as foot proxy, elbow as end_effector proxy
+  trackable_bodies_subset: ['pelvis', 'torso_link', 'left_ankle_link', 'right_ankle_link', 'left_elbow_link', 'right_elbow_link']
+  key_bodies: ['left_ankle_link', 'right_ankle_link', 'left_elbow_link', 'right_elbow_link']
+  non_termination_contact_bodies: ['left_ankle_link', 'right_ankle_link']
+  right_foot_name: 'right_ankle_link'
+  left_foot_name: 'left_ankle_link'
+  head_body_name: 'torso_link'  # Genesis merged head into torso
+  
+  # Fix observation size for 20 bodies: 1 + 20 * (3 + 6 + 3 + 3) - 3 = 298
+  self_obs_max_coords_size: 298
+  
+  # Update dof_body_ids to match the 20-link structure (0-19 indices)
+  dof_body_ids: [ 1, 4, 8, 12, 16, 2, 5, 9, 13, 17, 3, 6, 10, 14, 18, 7, 11, 15, 19 ] 

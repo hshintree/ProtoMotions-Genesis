@@ -7,8 +7,18 @@ import math
 
 from isaac_utils import torch_utils, rotations, maths
 
+# Disable JIT compilation for MPS (Apple Silicon) as it doesn't support graph fuser
+_USE_JIT = not (torch.backends.mps.is_available() and torch.backends.mps.is_built())
 
-@torch.jit.script
+def _maybe_jit(fn):
+    """Conditionally apply torch.jit.script based on device capability."""
+    return torch.jit.script(fn) if _USE_JIT else fn
+
+def _maybe_jit_if_tracing(fn):
+    """Conditionally apply torch.jit.script_if_tracing based on device capability."""
+    return torch.jit.script_if_tracing(fn) if _USE_JIT else fn
+
+@_maybe_jit
 def dof_to_obs(
     pose: Tensor, dof_obs_size: int, dof_offsets: List[int], joint_axis: List[str], w_last: bool
 ) -> Tensor:
@@ -102,7 +112,7 @@ def build_pd_action_offset_scale(
     return pd_action_offset, pd_action_scale
 
 
-@torch.jit.script
+@_maybe_jit
 def compute_humanoid_observations(
     root_pos: Tensor,
     root_rot: Tensor,
@@ -167,7 +177,7 @@ def compute_humanoid_observations(
     return obs
 
 
-@torch.jit.script
+@_maybe_jit
 def compute_humanoid_observations_max(
     body_pos: Tensor,
     body_rot: Tensor,
@@ -253,7 +263,7 @@ def compute_humanoid_observations_max(
     return obs
 
 
-@torch.jit.script_if_tracing
+@_maybe_jit_if_tracing
 def compute_humanoid_reset(
     reset_buf: Tensor,
     progress_buf: Tensor,
@@ -291,7 +301,7 @@ def compute_humanoid_reset(
     return reset, terminated
 
 
-@torch.jit.script
+@_maybe_jit
 def build_disc_observations(
     root_pos: Tensor,
     root_rot: Tensor,
@@ -362,7 +372,7 @@ def build_disc_observations(
     return obs
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_diff_norm(quat1: Tensor, quat2: Tensor, w_last: bool):
     if w_last:
         w = 3
@@ -376,7 +386,7 @@ def quat_diff_norm(quat1: Tensor, quat2: Tensor, w_last: bool):
     return norm
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_angle_diff_norm(quat1: Tensor, quat2: Tensor, w_last: bool):
     diff_quat = rotations.quat_mul(
         quat2, rotations.quat_conjugate(quat1, w_last), w_last
@@ -385,7 +395,7 @@ def quat_angle_diff_norm(quat1: Tensor, quat2: Tensor, w_last: bool):
     return angle_axis**2
 
 
-@torch.jit.script
+@_maybe_jit
 def remove_base_rot(quat: Tensor, w_last: bool):
     base_rot = rotations.quat_conjugate(
         torch.tensor([[0.5, 0.5, 0.5, 0.5]]).to(quat), w_last
@@ -394,7 +404,7 @@ def remove_base_rot(quat: Tensor, w_last: bool):
     return rotations.quat_mul(quat, base_rot.repeat(shape, 1), w_last)
 
 
-@torch.jit.script_if_tracing
+@_maybe_jit_if_tracing
 def get_relative_object_pointclouds_jit(
     root_pos: Tensor, root_rot: Tensor, pointclouds: Tensor, w_last: bool
 ) -> Tensor:
@@ -443,7 +453,7 @@ def get_relative_object_pointclouds_jit(
     )
 
 
-@torch.jit.script_if_tracing
+@_maybe_jit_if_tracing
 def compute_relative_to_object_pointcloud_contact_bodies_jit(
     ego_object_pointclouds: Tensor, ego_contact_bodies: Tensor, w_last: bool
 ) -> Tensor:
@@ -497,7 +507,7 @@ def compute_relative_to_object_pointcloud_contact_bodies_jit(
     return global_vectors.reshape(num_envs, num_objects_per_env, num_contact_bodies, 3)
 
 
-@torch.jit.script_if_tracing
+@_maybe_jit_if_tracing
 def compute_relative_to_object_contacts_contact_bodies_jit(
     target_contact_positions: Tensor,  # [num_envs, num_objects, num_contact_bodies, 3]
     contact_bodies: Tensor,  # [num_envs, num_contact_bodies, 3]
@@ -529,7 +539,7 @@ def compute_relative_to_object_contacts_contact_bodies_jit(
     )
 
 
-@torch.jit.script_if_tracing
+@_maybe_jit_if_tracing
 def get_object_bounding_box_obs_jit(
     object_ids: Tensor,
     root_pos: Tensor,

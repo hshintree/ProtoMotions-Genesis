@@ -10,8 +10,20 @@ from typing import List, Optional
 import math
 import torch
 
+# Disable JIT compilation for MPS (Apple Silicon) as it doesn't support graph fuser
+_USE_JIT = not (torch.backends.mps.is_available() and torch.backends.mps.is_built())
 
-@torch.jit.script
+def _maybe_jit(fn):
+    """Conditionally apply torch.jit.script based on device capability."""
+    return torch.jit.script(fn) if _USE_JIT else fn
+
+def _maybe_jit_if_tracing(fn):
+    """Conditionally apply torch.jit.script_if_tracing based on device capability."""
+    return torch.jit.script_if_tracing(fn) if _USE_JIT else fn
+
+
+
+@_maybe_jit
 def quat_mul(a, b):
     """
     quaternion multiplication
@@ -27,7 +39,7 @@ def quat_mul(a, b):
     return torch.stack([x, y, z, w], dim=-1)
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_pos(x):
     """
     make all the real part of the quaternion positive
@@ -38,7 +50,7 @@ def quat_pos(x):
     return q
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_abs(x):
     """
     quaternion norm (unit quaternion represents a 3D rotation, which has norm of 1)
@@ -47,7 +59,7 @@ def quat_abs(x):
     return x
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_unit(x):
     """
     normalized quaternion with norm of 1
@@ -56,7 +68,7 @@ def quat_unit(x):
     return x / (norm.clamp(min=1e-9))
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_conjugate(x):
     """
     quaternion with its imaginary part negated
@@ -64,7 +76,7 @@ def quat_conjugate(x):
     return torch.cat([-x[..., :3], x[..., 3:]], dim=-1)
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_real(x):
     """
     real component of the quaternion
@@ -72,7 +84,7 @@ def quat_real(x):
     return x[..., 3]
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_imaginary(x):
     """
     imaginary components of the quaternion
@@ -80,7 +92,7 @@ def quat_imaginary(x):
     return x[..., :3]
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_norm_check(x):
     """
     verify that a quaternion has norm 1
@@ -91,7 +103,7 @@ def quat_norm_check(x):
     assert bool((x[..., 3] >= 0).all()), "the quaternion has negative real part"
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_normalize(q):
     """
     Construct 3D rotation from quaternion (the quaternion needs not to be normalized).
@@ -100,7 +112,7 @@ def quat_normalize(q):
     return q
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_from_xyz(xyz):
     """
     Construct 3D rotation from the imaginary component
@@ -110,18 +122,21 @@ def quat_from_xyz(xyz):
     return torch.cat([xyz, w], dim=-1)
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_identity(shape: List[int]):
     """
     Construct 3D identity rotation given shape
     """
+    # Convert torch.Size to list if needed for concatenation
+    if isinstance(shape, torch.Size):
+        shape = list(shape)
     w = torch.ones(shape + [1])
     xyz = torch.zeros(shape + [3])
     q = torch.cat([xyz, w], dim=-1)
     return quat_normalize(q)
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_from_angle_axis(angle, axis, degree: bool = False):
     """Create a 3D rotation from angle and axis of rotation. The rotation is counter-clockwise
     along the axis.
@@ -145,7 +160,7 @@ def quat_from_angle_axis(angle, axis, degree: bool = False):
     return quat_normalize(torch.cat([xyz, w], dim=-1))
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_from_rotation_matrix(m):
     """
     Construct a 3D rotation from a valid 3x3 rotation matrices.
@@ -195,7 +210,7 @@ def quat_from_rotation_matrix(m):
     return quat_normalize(torch.stack([x, y, z, w], dim=-1)).squeeze(0)
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_mul_norm(x, y):
     """
     Combine two set of 3D rotations together using \**\* operator. The shape needs to be
@@ -204,7 +219,7 @@ def quat_mul_norm(x, y):
     return quat_normalize(quat_mul(x, y))
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_rotate(rot, vec):
     """
     Rotate a 3D vector with the 3D rotation
@@ -213,7 +228,7 @@ def quat_rotate(rot, vec):
     return quat_imaginary(quat_mul(quat_mul(rot, other_q), quat_conjugate(rot)))
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_inverse(x):
     """
     The inverse of the rotation
@@ -221,7 +236,7 @@ def quat_inverse(x):
     return quat_conjugate(x)
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_identity_like(x):
     """
     Construct identity 3D rotation with the same shape
@@ -229,7 +244,7 @@ def quat_identity_like(x):
     return quat_identity(x.shape[:-1])
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_angle_axis(x):
     """
     The (angle, axis) representation of the rotation. The axis is normalized to unit length.
@@ -242,7 +257,7 @@ def quat_angle_axis(x):
     return angle, axis
 
 
-@torch.jit.script
+@_maybe_jit
 def quat_yaw_rotation(x, z_up: bool = True):
     """
     Yaw rotation (rotation along z-axis)
@@ -263,7 +278,7 @@ def quat_yaw_rotation(x, z_up: bool = True):
     return quat_normalize(q)
 
 
-@torch.jit.script
+@_maybe_jit
 def transform_from_rotation_translation(
     r: Optional[torch.Tensor] = None, t: Optional[torch.Tensor] = None
 ):
@@ -279,7 +294,7 @@ def transform_from_rotation_translation(
     return torch.cat([r, t], dim=-1)
 
 
-@torch.jit.script
+@_maybe_jit
 def transform_identity(shape: List[int]):
     """
     Identity transformation with given shape
@@ -289,19 +304,19 @@ def transform_identity(shape: List[int]):
     return transform_from_rotation_translation(r, t)
 
 
-@torch.jit.script
+@_maybe_jit
 def transform_rotation(x):
     """Get rotation from transform"""
     return x[..., :4]
 
 
-@torch.jit.script
+@_maybe_jit
 def transform_translation(x):
     """Get translation from transform"""
     return x[..., 4:]
 
 
-@torch.jit.script
+@_maybe_jit
 def transform_inverse(x):
     """
     Inverse transformation
@@ -312,7 +327,7 @@ def transform_inverse(x):
     )
 
 
-@torch.jit.script
+@_maybe_jit
 def transform_identity_like(x):
     """
     identity transformation with the same shape
@@ -320,7 +335,7 @@ def transform_identity_like(x):
     return transform_identity(x.shape)
 
 
-@torch.jit.script
+@_maybe_jit
 def transform_mul(x, y):
     """
     Combine two transformation together
@@ -333,7 +348,7 @@ def transform_mul(x, y):
     return z
 
 
-@torch.jit.script
+@_maybe_jit
 def transform_apply(rot, vec):
     """
     Transform a 3D vector
@@ -342,7 +357,7 @@ def transform_apply(rot, vec):
     return quat_rotate(transform_rotation(rot), vec) + transform_translation(rot)
 
 
-@torch.jit.script
+@_maybe_jit
 def rot_matrix_det(x):
     """
     Return the determinant of the 3x3 matrix. The shape of the tensor will be as same as the
@@ -357,7 +372,7 @@ def rot_matrix_det(x):
     return t1 - t2 + t3
 
 
-@torch.jit.script
+@_maybe_jit
 def rot_matrix_integrity_check(x):
     """
     Verify that a rotation matrix has a determinant of one and is orthogonal
@@ -372,7 +387,7 @@ def rot_matrix_integrity_check(x):
     assert bool(((rtr - rtr_gt) < 1e-3).all()), "the matrix is not orthogonal"
 
 
-@torch.jit.script
+@_maybe_jit
 def rot_matrix_from_quaternion(q):
     """
     Construct rotation matrix from quaternion
@@ -400,7 +415,7 @@ def rot_matrix_from_quaternion(q):
     return R
 
 
-# @torch.jit.script
+# @_maybe_jit
 # def rot_matrix_from_quaternion(quaternions: torch.Tensor) -> torch.Tensor:
 #     """
 #     Convert rotations given as quaternions to rotation matrices.
@@ -432,7 +447,7 @@ def rot_matrix_from_quaternion(q):
 #     return o.reshape(quaternions.shape[:-1] + (3, 3))
 
 
-@torch.jit.script
+@_maybe_jit
 def euclidean_to_rotation_matrix(x):
     """
     Get the rotation matrix on the top-left corner of a Euclidean transformation matrix
@@ -440,14 +455,14 @@ def euclidean_to_rotation_matrix(x):
     return x[..., :3, :3]
 
 
-@torch.jit.script
+@_maybe_jit
 def euclidean_integrity_check(x):
     euclidean_to_rotation_matrix(x)  # check 3d-rotation matrix
     assert bool((x[..., 3, :3] == 0).all()), "the last row is illegal"
     assert bool((x[..., 3, 3] == 1).all()), "the last row is illegal"
 
 
-@torch.jit.script
+@_maybe_jit
 def euclidean_translation(x):
     """
     Get the translation vector located at the last column of the matrix
@@ -455,7 +470,7 @@ def euclidean_translation(x):
     return x[..., :3, 3]
 
 
-@torch.jit.script
+@_maybe_jit
 def euclidean_inverse(x):
     """
     Compute the matrix that represents the inverse rotation
@@ -467,7 +482,7 @@ def euclidean_inverse(x):
     return s
 
 
-@torch.jit.script
+@_maybe_jit
 def euclidean_to_transform(transformation_matrix):
     """
     Construct a transform from a Euclidean transformation matrix
