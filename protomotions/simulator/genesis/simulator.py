@@ -146,15 +146,20 @@ class GenesisSimulator(Simulator):
         dof_limits_upper = []
         for joint in self._robot.joints:
             if joint.name in self.robot_config.dof_names:
-                if type(joint.dof_idx_local) is list:
-                    self._genesis_dof_indices.extend(joint.dof_idx_local)
+                # Prefer new Genesis API 'dofs_idx_local'; fall back to older 'dof_idx_local'
+                idx_local = getattr(joint, "dofs_idx_local", None)
+                if idx_local is None:
+                    idx_local = getattr(joint, "dof_idx_local")
+                if isinstance(idx_local, list):
+                    self._genesis_dof_indices.extend(idx_local)
                 else:
-                    self._genesis_dof_indices.append(joint.dof_idx_local)
+                    self._genesis_dof_indices.append(idx_local)
 
                 dof_limits_lower.extend(joint.dofs_limit[:, 0])
                 dof_limits_upper.extend(joint.dofs_limit[:, 1])
 
-        self._genesis_dof_indices = torch.tensor(self._genesis_dof_indices, device=self.device, dtype=torch.int32)
+        # Genesis runs on CPU on macOS; keep DOF index tensor on CPU to match Genesis internal tensors
+        self._genesis_dof_indices = torch.tensor(self._genesis_dof_indices, device=torch.device("cpu"), dtype=torch.int64)
         self._dof_limits_lower_sim = torch.tensor(dof_limits_lower, device=self.device, dtype=torch.float32)
         self._dof_limits_upper_sim = torch.tensor(dof_limits_upper, device=self.device, dtype=torch.float32)
         
@@ -166,16 +171,16 @@ class GenesisSimulator(Simulator):
         This includes conversion tensors for bodies, DOFs, and contact sensors.
         """
         self._genesis_default_state = RobotState(
-            root_pos=self._robot.get_pos(),
-            root_rot=self._robot.get_quat(),
-            root_vel=self._robot.get_vel() * 0,
-            root_ang_vel=self._robot.get_ang() * 0,
-            dof_pos=self._robot.get_dofs_position(self._genesis_dof_indices),
-            dof_vel=self._robot.get_dofs_velocity(self._genesis_dof_indices),
-            rigid_body_pos=self._robot.get_links_pos(),
-            rigid_body_rot=self._robot.get_links_quat(),
-            rigid_body_vel=self._robot.get_links_vel(),
-            rigid_body_ang_vel=self._robot.get_links_ang(),
+            root_pos=self._robot.get_pos().to(self.device),
+            root_rot=self._robot.get_quat().to(self.device),
+            root_vel=(self._robot.get_vel() * 0).to(self.device),
+            root_ang_vel=(self._robot.get_ang() * 0).to(self.device),
+            dof_pos=self._robot.get_dofs_position(self._genesis_dof_indices).to(self.device),
+            dof_vel=self._robot.get_dofs_velocity(self._genesis_dof_indices).to(self.device),
+            rigid_body_pos=self._robot.get_links_pos().to(self.device),
+            rigid_body_rot=self._robot.get_links_quat().to(self.device),
+            rigid_body_vel=self._robot.get_links_vel().to(self.device),
+            rigid_body_ang_vel=self._robot.get_links_ang().to(self.device),
         )
         super().on_environment_ready()
         
@@ -186,8 +191,8 @@ class GenesisSimulator(Simulator):
             genesis_d_gains = self._common_d_gains[self.data_conversion.dof_convert_to_sim]
             
             # Set the gains on the robot
-            self._robot.set_dofs_kp(genesis_p_gains, self._genesis_dof_indices)
-            self._robot.set_dofs_kv(genesis_d_gains, self._genesis_dof_indices)
+            self._robot.set_dofs_kp(genesis_p_gains.cpu(), self._genesis_dof_indices)
+            self._robot.set_dofs_kv(genesis_d_gains.cpu(), self._genesis_dof_indices)
 
     def _get_sim_body_ordering(self) -> SimBodyOrdering:
         """Returns the ordering of bodies and DOFs in the simulation."""
@@ -195,9 +200,12 @@ class GenesisSimulator(Simulator):
         for joint in self._robot.joints:
             if joint.name in self.robot_config.dof_names:
                 common_dof_idx = self.robot_config.dof_names.index(joint.name)
-                if type(joint.dof_idx_local) is list:
-                    for dof_idx_local in joint.dof_idx_local:
-                        dof_offset = dof_idx_local - joint.dof_idx_local[0]
+                idx_local = getattr(joint, "dofs_idx_local", None)
+                if idx_local is None:
+                    idx_local = getattr(joint, "dof_idx_local")
+                if isinstance(idx_local, list):
+                    for dof_idx_local in idx_local:
+                        dof_offset = dof_idx_local - idx_local[0]
                         dof_names.append(self.robot_config.dof_names[common_dof_idx + dof_offset])
                 else:
                     dof_names.append(joint.name)
@@ -303,22 +311,23 @@ class GenesisSimulator(Simulator):
     # ===== Group 4: State Getters =====
     def _get_simulator_bodies_contact_buf(self, env_ids: Optional[torch.Tensor] = None) -> torch.Tensor:
         """Returns contact forces for robot bodies."""
-        contact_forces = self._robot.get_links_net_contact_force()
+        contact_forces = self._robot.get_links_net_contact_force().to(self.device)
         if env_ids is not None:
-            contact_forces = contact_forces[env_ids]
+            contact_forces = contact_forces[env_ids.to(contact_forces.device).long()]
         return contact_forces
     
     def _get_simulator_bodies_state(self, env_ids: Optional[torch.Tensor] = None) -> RobotState:
         """Returns the state of robot bodies."""
-        body_pos = self._robot.get_links_pos()
-        body_rot = self._robot.get_links_quat()
-        body_vel = self._robot.get_links_vel()
-        body_ang_vel = self._robot.get_links_ang()
+        body_pos = self._robot.get_links_pos().to(self.device)
+        body_rot = self._robot.get_links_quat().to(self.device)
+        body_vel = self._robot.get_links_vel().to(self.device)
+        body_ang_vel = self._robot.get_links_ang().to(self.device)
         if env_ids is not None:
-            body_pos = body_pos[env_ids]
-            body_rot = body_rot[env_ids]
-            body_vel = body_vel[env_ids]
-            body_ang_vel = body_ang_vel[env_ids]
+            idx = env_ids.to(body_pos.device).long()
+            body_pos = body_pos[idx]
+            body_rot = body_rot[idx]
+            body_vel = body_vel[idx]
+            body_ang_vel = body_ang_vel[idx]
         return RobotState(
             rigid_body_pos=body_pos,
             rigid_body_rot=body_rot,
@@ -332,15 +341,16 @@ class GenesisSimulator(Simulator):
 
     def _get_simulator_root_state(self, env_ids: Optional[torch.Tensor] = None) -> RobotState:
         """Returns the root state of the robot."""
-        root_pos = self._robot.get_pos()
-        root_rot = self._robot.get_quat()
-        root_vel = self._robot.get_vel()
-        root_ang_vel = self._robot.get_ang()
+        root_pos = self._robot.get_pos().to(self.device)
+        root_rot = self._robot.get_quat().to(self.device)
+        root_vel = self._robot.get_vel().to(self.device)
+        root_ang_vel = self._robot.get_ang().to(self.device)
         if env_ids is not None:
-            root_pos = root_pos[env_ids]
-            root_rot = root_rot[env_ids]
-            root_vel = root_vel[env_ids]
-            root_ang_vel = root_ang_vel[env_ids]
+            idx = env_ids.to(root_pos.device).long()
+            root_pos = root_pos[idx]
+            root_rot = root_rot[idx]
+            root_vel = root_vel[idx]
+            root_ang_vel = root_ang_vel[idx]
         return RobotState(
             root_pos=root_pos,
             root_rot=root_rot,
@@ -358,18 +368,20 @@ class GenesisSimulator(Simulator):
 
     def _get_simulator_dof_forces(self, env_ids=None):
         """Returns the DOF forces."""
-        dof_forces = self._robot.get_dofs_force(self._genesis_dof_indices)
+        dof_forces = self._robot.get_dofs_force(self._genesis_dof_indices).to(self.device)
         if env_ids is not None:
-            dof_forces = dof_forces[env_ids]
+            idx = env_ids.to(dof_forces.device).long()
+            dof_forces = dof_forces[idx]
         return dof_forces
 
     def _get_simulator_dof_state(self, env_ids: Optional[torch.Tensor] = None) -> RobotState:
         """Returns the state of robot DOFs."""
-        dof_pos = self._robot.get_dofs_position(self._genesis_dof_indices)
-        dof_vel = self._robot.get_dofs_velocity(self._genesis_dof_indices)
+        dof_pos = self._robot.get_dofs_position(self._genesis_dof_indices).to(self.device)
+        dof_vel = self._robot.get_dofs_velocity(self._genesis_dof_indices).to(self.device)
         if env_ids is not None:
-            dof_pos = dof_pos[env_ids]
-            dof_vel = dof_vel[env_ids]
+            idx = env_ids.to(dof_pos.device).long()
+            dof_pos = dof_pos[idx]
+            dof_vel = dof_vel[idx]
         return RobotState(
             dof_pos=dof_pos,
             dof_vel=dof_vel

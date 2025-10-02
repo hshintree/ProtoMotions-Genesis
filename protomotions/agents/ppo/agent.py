@@ -76,6 +76,17 @@ class PPO:
 
         self.force_full_restart = False
 
+        # Debug logging config
+        dbg = getattr(self.config, "debug_log", None)
+        if dbg is not None:
+            self.debug_enable = bool(getattr(dbg, "enable", False))
+            self.debug_every_steps = int(getattr(dbg, "every_steps", 8))
+            self.debug_num_envs = int(getattr(dbg, "num_envs_to_print", 1))
+        else:
+            self.debug_enable = False
+            self.debug_every_steps = 8
+            self.debug_num_envs = 1
+
     @property
     def should_stop(self):
         return self.fabric.broadcast(self._should_stop)
@@ -280,6 +291,35 @@ class PPO:
 
                     # Step the environment
                     next_obs, rewards, dones, terminated, extras = self.env_step(action)
+
+                    # Optional debug logging (rank 0 only)
+                    if self.debug_enable and self.fabric.global_rank == 0:
+                        if step % max(1, self.debug_every_steps) == 0:
+                            num_p = min(self.debug_num_envs, self.num_envs)
+                            idx = torch.arange(num_p, device=self.device)
+                            with torch.no_grad():
+                                act_sample = action[idx]
+                                obs_sample = obs["self_obs"][idx]
+                                rew_sample = rewards[idx]
+                                done_sample = dones[idx]
+                                # Reward terms if available
+                                rew_terms = {}
+                                if isinstance(extras, dict) and "to_log" in extras and isinstance(extras["to_log"], dict):
+                                    for k, v in extras["to_log"].items():
+                                        if hasattr(v, "detach"):
+                                            v = v.detach()
+                                        if hasattr(v, "cpu"):
+                                            rew_terms[k] = v[idx].cpu().numpy()
+                                print(
+                                    f"[dbg] epoch={self.current_epoch} step={step} envs={num_p} "
+                                    f"act_norm={act_sample.norm(dim=-1).mean().item():.3f} "
+                                    f"obs_norm={obs_sample.norm(dim=-1).mean().item():.3f} "
+                                    f"rew_mean={rew_sample.mean().item():.3f} done_any={bool(done_sample.any().item())}"
+                                )
+                                if len(rew_terms) > 0:
+                                    # Print a small subset of reward terms
+                                    preview = {k: (v.mean() if hasattr(v, "mean") else v) for k, v in list(rew_terms.items())[:4]}
+                                    print(f"[dbg] reward_terms_sample={preview}")
 
                     all_done_indices = dones.nonzero(as_tuple=False)
                     done_indices = all_done_indices.squeeze(-1)

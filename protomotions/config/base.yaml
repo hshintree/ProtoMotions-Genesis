@@ -3,6 +3,7 @@ defaults:
   - base/fabric
   - base/hydra
   - base/structure
+  - _self_
 
 # These are global variables that all levels of the config can access.
 ## Experiment setup
@@ -15,8 +16,14 @@ sync_motion: False
 ### Checkpoint logic
 checkpoint: null
 
+# Recorder behavior flags (for extras/record_rollout.py)
+ignore_done: false
+stop_on_done: false
+auto_reset_on_done: true
+deterministic: true
+
 ### Naming and dir structure
-experiment_name: ???
+experiment_name: record_rollout
 base_dir: results
 save_dir: ${base_dir}/${experiment_name}
 

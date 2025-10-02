@@ -17,3 +17,9 @@ agent:
     training_early_termination:
       early_terminate_cart_err: null
       early_terminate_success_rate: null
+
+    # Optional debug logging during training
+    debug_log:
+      enable: false
+      every_steps: 8
+      num_envs_to_print: 1
